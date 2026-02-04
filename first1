@@ -1,3 +1,5 @@
+NEW ) Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine
+
 $vhdxPath = "$env:USERPROFILE\Desktop\Saved.vhdx"
 
 # 1. Generate Random Password
