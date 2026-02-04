@@ -16,7 +16,7 @@ clean
 convert gpt
 create partition primary
 format fs=ntfs quick label="SecureTest"
-assign
+assign letter=Z
 "@
 $dpScript | Out-File "$env:TEMP\dp.txt" -Encoding ASCII
 diskpart /s "$env:TEMP\dp.txt"
