@@ -1,57 +1,33 @@
-# --- CONFIGURATION ---
-$vhdxPath = "$env:USERPROFILE\Desktop\test.vhdx"
-$volumeLabel = "SecureTest"
+$vhdxPath = "$env:USERPROFILE\Desktop\Saved.vhdx"
 
-# 1. Generate a random 32-character alphanumeric password
-$charSet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-$password = -join ((1..32) | ForEach-Object { $charSet[(Get-Random -Maximum $charSet.Length)] })
+# 1. Generate Random Password
+$passwordCharSet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+$password = -join ((1..32) | ForEach-Object { $passwordCharSet[(Get-Random -Maximum $passwordCharSet.Length)] })
 $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
 
-Write-Host "----------------------------------------------------" -ForegroundColor Yellow
-Write-Host "GENERATED PASSWORD: $password" -ForegroundColor Green
-Write-Host "Copy this now! It will be required to unlock the disk."
-Write-Host "----------------------------------------------------"
-
-# 2. Create DiskPart Script to Mount and Format
-# Using DiskPart avoids the 'Mount-VHD' missing cmdlet error.
-$diskpartScript = @"
+# 2. Use DiskPart to Mount and Format
+# Creating a temporary instruction file for DiskPart
+$dpScript = @"
 select vdisk file="$vhdxPath"
 attach vdisk
 clean
 convert gpt
 create partition primary
-format fs=ntfs quick label="$volumeLabel"
+format fs=ntfs quick label="SecureTest"
 assign
 "@
+$dpScript | Out-File "$env:TEMP\dp.txt" -Encoding ASCII
+diskpart /s "$env:TEMP\dp.txt"
 
-$scriptPath = "$env:TEMP\dp_format.txt"
-$diskpartScript | Out-File $scriptPath -Encoding ASCII
+# 3. Get the Drive Letter of the newly mounted VHD
+# We look for the volume labeled "SecureTest"
+$driveLetter = (Get-Volume -FileSystemLabel "SecureTest").DriveLetter + ":"
 
-Write-Host "Mounting and Formatting VHDX..." -ForegroundColor Cyan
-diskpart /s $scriptPath
-
-# 3. Identify the Drive Letter
-# We wait a moment for Windows to register the new drive letter
-Start-Sleep -Seconds 2
-$driveLetter = (Get-Volume -FileSystemLabel $volumeLabel).DriveLetter
-
-if (-not $driveLetter) {
-    Write-Error "Could not find the drive letter for '$volumeLabel'. Script aborted."
-    exit
+# 4. Encrypt with BitLocker
+if ($driveLetter) {
+    Enable-BitLocker -MountPoint $driveLetter -PasswordProtector -Password $securePassword -UsedSpaceOnly
+    Write-Host "`nSUCCESS!" -ForegroundColor Cyan
+    Write-Host "Password: $password" -ForegroundColor Green
+} else {
+    Write-Host "Could not find the mounted volume." -ForegroundColor Red
 }
-
-$mountPoint = "$($driveLetter):"
-Write-Host "Drive assigned to $mountPoint. Starting BitLocker..." -ForegroundColor Cyan
-
-# 4. Enable BitLocker
-# -UsedSpaceOnly makes this nearly instant for a new/empty test file.
-try {
-    Enable-BitLocker -MountPoint $mountPoint -PasswordProtector -Password $securePassword -UsedSpaceOnly
-    Write-Host "SUCCESS: VHDX is now encrypted and ready for testing." -ForegroundColor Green
-}
-catch {
-    Write-Error "BitLocker failed. Ensure 'BitLocker Drive Encryption' feature is enabled on your host."
-}
-
-# Cleanup temporary script
-Remove-Item $scriptPath
