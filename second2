@@ -1,0 +1,58 @@
+# --- CONFIGURATION ---
+$vhdxPath = "$env:USERPROFILE\Desktop\test.vhdx"
+$volumeLabel = "SecureTest"
+
+# 1. Generate a random 32-character password
+$charSet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+$password = -join ((1..32) | ForEach-Object { $charSet[(Get-Random -Maximum $charSet.Length)] })
+$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+
+Write-Host "----------------------------------------------------" -ForegroundColor Yellow
+Write-Host "GENERATED PASSWORD: $password" -ForegroundColor Green
+Write-Host "----------------------------------------------------"
+
+# 2. DiskPart Execution
+$dpScript = @"
+select vdisk file="$vhdxPath"
+attach vdisk
+clean
+convert gpt
+create partition primary
+format fs=ntfs quick label="$volumeLabel"
+assign
+"@
+$dpPath = "$env:TEMP\dp_secure.txt"
+$dpScript | Out-File $dpPath -Encoding ASCII
+Write-Host "Mounting and Formatting..." -ForegroundColor Cyan
+diskpart /s $dpPath
+
+# 3. Robust Drive Detection (Retry Loop)
+Write-Host "Waiting for Windows to assign drive letter..." -ForegroundColor Cyan
+$driveLetter = $null
+$attempts = 0
+while (-not $driveLetter -and $attempts -lt 10) {
+    Start-Sleep -Seconds 1
+    $driveLetter = (Get-Volume -FileSystemLabel $volumeLabel -ErrorAction SilentlyContinue).DriveLetter
+    $attempts++
+}
+
+if (-not $driveLetter) {
+    Write-Host "ERROR: Drive letter not found after 10 seconds. Check if VHDX is valid." -ForegroundColor Red
+    exit
+}
+
+$mountPoint = "$($driveLetter):"
+Write-Host "Detected Drive: $mountPoint" -ForegroundColor Green
+
+# 4. Apply BitLocker
+try {
+    Write-Host "Encrypting volume..." -ForegroundColor Cyan
+    Enable-BitLocker -MountPoint $mountPoint -PasswordProtector -Password $securePassword -UsedSpaceOnly
+    Write-Host "SUCCESS! The VHDX is now password protected." -ForegroundColor Green
+}
+catch {
+    Write-Host "BitLocker Error: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# Cleanup
+Remove-Item $dpPath
